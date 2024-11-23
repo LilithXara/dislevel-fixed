@@ -1,4 +1,5 @@
 import os
+import discord
 from typing import Optional, Union
 
 from discord import Embed, File, Interaction, Member, app_commands
@@ -12,6 +13,9 @@ from ..utils import (
     get_member_position,
     set_bg_image,
 )
+
+# Confirm import works
+print(f"DEBUG: Imported discord module: {discord.__name__}")
 
 
 class LevelingSlash(commands.Cog):
@@ -42,39 +46,79 @@ class LevelingSlash(commands.Cog):
     @app_commands.command(description="See the server leaderboard")
     async def leaderboard(self, interaction: Interaction):
         """See the server leaderboard"""
-        leaderboard_data = await get_leaderboard_data(self.bot, interaction.guild.id)
+        print("DEBUG: Starting leaderboard command execution.")  # Debug start
 
-        embed = Embed(title=f"Leaderboard", description="")
-        embed.set_thumbnail(url=os.environ.get("DISLEVEL_LEADERBOARD_ICON"))
+        try:
+            # Defer the interaction response to avoid timeout
+            await interaction.response.defer()
+            print("DEBUG: Deferred interaction response.")
 
-        position = 0
-        for data in leaderboard_data:
-            member = None
-            if self.bot.intents.members:
-                member = interaction.guild.get_member(data["member_id"])
-            else:
-                member = await interaction.guild.fetch_member(data["member_id"])
+            # Fetch leaderboard data
+            leaderboard_data = await get_leaderboard_data(self.bot, interaction.guild.id)
+            print(f"DEBUG: Retrieved leaderboard data: {leaderboard_data}")
 
-            if member:
-                position += 1
-                embed.description += f"{position}. {member.mention} - {data['xp']}\n"
+            # Initialize the embed for the leaderboard
+            embed = Embed(title="Leaderboard", description="")
+            embed.set_thumbnail(url=os.environ.get("DISLEVEL_LEADERBOARD_ICON"))
 
-        await interaction.response.send_message(embed=embed)
+            position = 0
+            skipped_members = []  # Track skipped members for debugging
 
-    @app_commands.command(description="Set image of your card bg")
-    async def setbg(self, interaction: Interaction, *, url: str):
-        """Set image of your card bg"""
-        await set_bg_image(self.bot, interaction.user.id, interaction.guild.id, url)
-        await interaction.response.send_message("Background image has been updated")
+            for data in leaderboard_data:
+                try:
+                    print(f"DEBUG: Processing member ID {data['member_id']}")  # Log member processing
+                    # Attempt to retrieve the member from cache or API
+                    member = interaction.guild.get_member(data["member_id"])
+                    if member is None:
+                        print(f"DEBUG: Member ID {data['member_id']} not in cache, fetching from API.")
+                        member = await interaction.guild.fetch_member(data["member_id"])
 
-    @app_commands.command(description="Reset image of your card bg")
-    async def resetbg(self, interaction: Interaction):
-        """Reset image of your card bg"""
-        await set_bg_image(self.bot, interaction.user.id, interaction.guild.id, "")
-        await interaction.response.send_message(
-            "Background image has been set to default"
-        )
+                    # Add member details to the embed
+                    position += 1
+                    embed.description += f"{position}. {member.mention} - {data['xp']} XP\n"
+                    print(f"DEBUG: Successfully added member {member} to leaderboard.")  # Log success
+
+                except discord.NotFound:
+                    skipped_members.append(data['member_id'])
+                    print(f"WARNING: Member ID {data['member_id']} not found. Skipping.")
+                    continue
+                except discord.Forbidden:
+                    skipped_members.append(data['member_id'])
+                    print(f"WARNING: Insufficient permissions to fetch member ID {data['member_id']}. Skipping.")
+                    continue
+                except discord.HTTPException as e:
+                    skipped_members.append(data['member_id'])
+                    print(f"WARNING: API error when fetching member {data['member_id']}: {e}")
+                    continue
+                except Exception as e:
+                    skipped_members.append(data['member_id'])
+                    print(f"ERROR: Unexpected error with member ID {data['member_id']}: {e}")
+                    continue
+
+            # Log skipped members for debugging
+            print(f"DEBUG: Total skipped members: {len(skipped_members)}")
+            print(f"DEBUG: Skipped member IDs: {skipped_members}")
+
+            # Handle cases with no valid members
+            if position == 0:
+                embed.description = "No valid members found for leaderboard."
+                print("DEBUG: No valid members found for leaderboard.")  # Log empty leaderboard
+
+            print(f"DEBUG: Successfully generated leaderboard with {position} members.")
+            await interaction.followup.send(embed=embed)  # Send a follow-up message
+
+        except Exception as e:
+            # Catch and log any issues in the main function
+            print(f"ERROR: Unexpected error in leaderboard command: {e}")
+            await interaction.followup.send(
+                "An error occurred while retrieving the leaderboard. Please try again later.",
+                ephemeral=True,
+            )
+        finally:
+            print("DEBUG: Finished leaderboard command execution.")  # Debug end
 
 
 async def setup(bot: commands.Bot):
+    print("DEBUG: Loading LevelingSlash cog.")  # Debug log
     await bot.add_cog(LevelingSlash(bot))
+    print("DEBUG: LevelingSlash cog loaded.")  # Debug log
