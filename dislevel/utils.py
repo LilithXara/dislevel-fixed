@@ -1,7 +1,9 @@
 import os
+import discord  # Add this import to resolve discord-specific exceptions
 from typing import List, Union
 
 from ._models import Field
+
 
 leveling_table: str = None
 
@@ -81,23 +83,57 @@ async def get_member_data(bot, member_id: int, guild_id: int) -> Union[dict, Non
 
 async def get_leaderboard_data(bot, guild_id: int):
     """Get a guild's leaderboard data"""
+    print(f"DEBUG: Fetching leaderboard data for guild {guild_id}.")  # Debug logging
+    
     database = bot.dislevel_database
     leveling_table = os.environ.get("DISLEVEL_TABLE")
-
-    data = await database.fetch_all(
+    
+    # Fetch raw leaderboard data from the database
+    raw_data = await database.fetch_all(
         f"""
         SELECT   member_id, xp
         FROM     {leveling_table}
         WHERE    guild_id = :guild_id
-        ORDER BY xp
-        DESC
+        ORDER BY xp DESC
         LIMIT 10
         """,
         {"guild_id": guild_id},
     )
+    print(f"DEBUG: Raw leaderboard data: {raw_data}")
+    
+    # Validate that the members exist in the guild
+    guild = bot.get_guild(guild_id)
+    if guild is None:
+        print(f"ERROR: Guild with ID {guild_id} not found.")
+        return []
+    
+    validated_data = []
+    for row in raw_data:
+        member_id = row["member_id"]
+        try:
+            member = guild.get_member(member_id)
+            if not member:
+                print(f"DEBUG: Member ID {member_id} not in cache, attempting API fetch.")
+                member = await guild.fetch_member(member_id)
+    
+            # Add valid members to the leaderboard data
+            if member:
+                validated_data.append(dict(row))
+                print(f"DEBUG: Valid member {member} added to leaderboard.")
+        except discord.NotFound:
+            print(f"WARNING: Member ID {member_id} not found in guild. Skipping.")
+            continue
+        except discord.Forbidden:
+            print(f"WARNING: Insufficient permissions to fetch member ID {member_id}. Skipping.")
+            continue
+        except Exception as e:
+            print(f"ERROR: Unexpected error with member ID {member_id}: {e}")
+            continue
+    
+    print(f"DEBUG: Validated leaderboard data: {validated_data}")
+    return validated_data
 
-    guild_data = [dict(row) for row in data]
-    return guild_data
+
 
 
 async def get_member_position(bot, member_id: int, guild_id: int):
